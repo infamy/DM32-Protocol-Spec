@@ -1,0 +1,56 @@
+MIT License
+
+Copyright (c) 2025 DM-32UV Protocol Documentation Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+DISCLAIMER
+
+This documentation is the result of reverse engineering efforts for educational
+and interoperability purposes. It is not affiliated with, endorsed by, or
+supported by Baofeng or any radio manufacturer.
+
+USE AT YOUR OWN RISK. The authors and contributors:
+- Make no warranties about the accuracy or completeness of this documentation
+- Are not responsible for any damage to equipment, data loss, or regulatory
+  violations that may result from using this information
+- Recommend verifying all information against official sources where available
+- Advise users to comply with all applicable laws and regulations regarding
+  radio equipment and communications
+
+Users are responsible for:
+- Ensuring their use complies with local regulations (FCC, CE, etc.)
+- Verifying compatibility with their specific radio model and firmware
+- Testing implementations thoroughly before use in production
+- Backing up radio configuration before making any changes
+- Understanding the risks of modifying radio firmware or configuration
+
+This documentation is provided for:
+- Educational purposes
+- Research and development
+- Interoperability with existing equipment
+- Creating compatible software tools
+
+This documentation is NOT intended for:
+- Circumventing security measures
+- Violating manufacturer warranties
+- Illegal modifications to radio equipment
+- Unauthorized access to radio systems
