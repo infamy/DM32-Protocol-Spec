@@ -41,11 +41,12 @@ The DM-32UV uses a **16MB address space** with data organized in **4KB blocks**.
 |---------------|------|----------|---------|
 | 0x001000-0x001FFF | 4 KB | 0x07 | Config header |
 | 0x005000-0x005FFF | 4 KB | 0x0A | **Canned messages** |
-| 0x007000-0x007FFF | 4 KB | 0x06 | Scan lists / button assignments |
+| 0x007000-0x007FFF | 4 KB | 0x06 | Empty/unused (varies by radio) |
 | 0x00C000-0x00CFFF | 4 KB | 0x10 | **Emergency systems** |
 | 0x00F000-0x00FFFF | 4 KB | 0x0F | **RX Group Lists (DMR)** |
 | 0x011000-0x011FFF | 4 KB | 0x03 | Unknown (mostly 0xFF) |
-| 0x014000-0x014FFF | 4 KB | 0x11 | **ZONES** |
+| 0x014000-0x014FFF | 4 KB | 0x11 | **Scan Lists** |
+| *varies* | 4 KB | 0x5c | **ZONES** |
 | **0x01B000-0x0C8FFF** | **~718 KB** | **0x12-0x41** | **CHANNELS (48 blocks)** |
 
 ## Metadata System
@@ -105,12 +106,13 @@ graph TD
 |----------|-----|---------|-----------------|
 | 0x02 | 0x02 | Unknown config | - |
 | 0x03 | 0x03 | Unknown (mostly 0xFF) | 0x011000 |
-| 0x06 | 0x06 | Scan lists / button assignments | 0x007000 |
+| 0x06 | 0x06 | Empty/unused (varies by radio) | 0x007000 |
 | 0x07 | 0x07 | Config header | 0x001000 |
 | 0x0A | 0x0A | **Canned messages** | 0x005000 |
 | 0x0F | 0x0F | **RX Group Lists (DMR talk groups)** | 0x00F000 |
 | 0x10 | 0x10 | **Emergency systems** | 0x00C000 |
-| 0x11 | 0x11 | **ZONES** | 0x014000 |
+| 0x11 | 0x11 | **Scan Lists** | 0x014000 |
+| 0x5c | 0x5c | **ZONES** | *varies* |
 | 0x65-0x67 | 0x65-0x67 | Extended config | Various |
 
 #### Channel Blocks (Sequential)
@@ -133,6 +135,30 @@ graph TD
 |----------|-----|---------|-----------|
 | 0x00 | 0x00 | Empty block | ~52% |
 | 0xFF | 0xFF | Invalid/unavailable | ~18.5% |
+
+#### Important Notes on Metadata Values
+
+**⚠️ CRITICAL**: Block addresses shown in the tables above are **examples only** and **vary between radios and firmware versions**. The radio uses dynamic memory allocation within the main config block (0x001000-0x0C8FFF). Always use metadata discovery rather than hardcoded addresses.
+
+**Verified Metadata Corrections** (based on actual radio analysis):
+
+- **Zones**: Metadata `0x5c` (92 decimal)
+  - Structure: 57 bytes per zone
+  - Capacity: Up to ~71 zones per 4KB block (4096 / 57)
+  - Verified by finding zone names ("DEFCON", "Vector", "FRS") in blocks with metadata `0x5c`
+
+- **Scan Lists**: Metadata `0x11` (17 decimal)
+  - Structure: 92 bytes per scan list
+  - Layout: Lists 1-44 start at offset 16, lists 45+ start at offset 0
+  - Verified by finding scan list names ("CZBB.List 2", "BCF.List 1") in blocks with metadata `0x11`
+
+- **Metadata `0x06`**: Appears to be empty/unused in many radios. May be used for other purposes or in different firmware versions.
+
+**Discovery Method**: 
+1. Read all blocks in the main config range (via V-frame 0x0A)
+2. Read metadata byte at offset `0xFFF` for each block
+3. Search block contents for known data patterns (zone names, scan list names, etc.)
+4. Build mapping of metadata values to actual block types
 
 ### Metadata Read Command
 
