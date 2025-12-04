@@ -96,7 +96,7 @@ typedef struct {
     
     // 0x19: Scan and bandwidth
     uint8_t scan_bandwidth;
-    // Bit 7: Bandwidth (0=25KHz, 1=12.5KHz)
+    // Bit 7: Bandwidth (0=12.5KHz narrow, 1=25KHz wide)
     // Bit 6: Scan add (0=Off, 1=On)
     // Bits 5-2: Scan list ID (0-15)
     // Bits 1-0: Reserved
@@ -205,7 +205,7 @@ static_assert(sizeof(dm32_channel_t) == 48, "Channel structure must be 48 bytes"
 
 | Bits | Mask | Field | Values |
 |------|------|-------|--------|
-| 7    | 0x80 | Bandwidth | 0=25KHz, 1=12.5KHz |
+| 7    | 0x80 | Bandwidth | 0=12.5KHz narrow, 1=25KHz wide |
 | 6    | 0x40 | Scan Add | 0=Off, 1=On |
 | 5-2  | 0x3C | Scan List ID | 0-15 |
 | 1-0  | 0x03 | Reserved | - |
@@ -372,7 +372,7 @@ def parse_channel_flags(data: bytes) -> dict:
         'lone_worker': bool(data[0x18] & 0x01),
         
         # Byte 0x19
-        'bandwidth': 1 if (data[0x19] & 0x80) else 0,
+        'bandwidth': 1 if (data[0x19] & 0x80) else 0,  # 0=12.5KHz narrow, 1=25KHz wide
         'scan_add': bool(data[0x19] & 0x40),
         'scan_list_id': (data[0x19] >> 2) & 0x0F,
         
@@ -453,7 +453,7 @@ class DM32Channel:
     lone_worker: bool
     
     # Byte 0x19: Scan and bandwidth
-    bandwidth: int  # 0=25KHz, 1=12.5KHz
+    bandwidth: int  # 0=12.5KHz narrow, 1=25KHz wide
     scan_add: bool
     scan_list_id: int  # 0-15
     
@@ -525,7 +525,7 @@ class DM32Channel:
         lone_worker = bool(mode_flags & 0x01)
         
         scan_bw = data[0x19]
-        bandwidth = 1 if (scan_bw & 0x80) else 0
+        bandwidth = 1 if (scan_bw & 0x80) else 0  # 0=12.5KHz narrow, 1=25KHz wide
         scan_add = bool(scan_bw & 0x40)
         scan_list_id = (scan_bw >> 2) & 0x0F
         
@@ -601,7 +601,7 @@ type Channel struct {
     LoneWorker   bool
     
     // 0x19: Scan and bandwidth
-    Bandwidth    uint8 // 0=25KHz, 1=12.5KHz
+    Bandwidth    uint8 // 0=12.5KHz narrow, 1=25KHz wide
     ScanAdd      bool
     ScanListID   uint8 // 0-15
     
