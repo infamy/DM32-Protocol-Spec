@@ -172,6 +172,8 @@ All metadata values discovered from probe data, organized by value. All blocks a
 3. Search block contents for known data patterns (zone names, scan list names, etc.)
 4. Build mapping of metadata values to actual block types
 
+**For detailed byte-level parsing of each metadata block type, see [05-DATA-STRUCTURES.md](05-DATA-STRUCTURES.md).**
+
 ### Metadata Read Command
 
 **⭐ Recommended Method (offset 0xFFF)**:

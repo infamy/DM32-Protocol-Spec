@@ -2,6 +2,24 @@
 
 This document provides **code-ready specifications** for all DM-32UV data structures.
 
+## Document Organization
+
+This document is organized as follows:
+
+1. **Primary Structures** - Detailed specifications for the most commonly used structures:
+   - Channel Structure (48 bytes)
+   - Zone Structure (57 bytes)
+   - Scan List Structure (92 bytes)
+   - RX Group List Structure
+
+2. **Additional Metadata Blocks** - Byte-level parsing for other metadata block types (0x02, 0x03, 0x04, 0x06, 0x07, 0x0A, 0x0F, 0x10, 0x65, 0x66, 0x67)
+
+3. **Data Encoding Reference** - Common encoding schemes used across structures
+
+**Note**: All metadata block addresses are dynamically allocated and must be discovered via metadata discovery. See [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md) for details on metadata discovery.
+
+---
+
 ## Channel Structure (48 bytes)
 
 ### Memory Layout
@@ -721,11 +739,12 @@ Zones group channels together for organizational purposes.
 
 ### Memory Organization
 
-**Buffer**: `dword_4E80E8`  
-**Metadata**: 0x11 (17)  
+**Metadata**: 0x5c (92)  
 **Block Size**: 4 KB (0x1000 bytes)  
 **Capacity**: ~71 zones maximum (4096 / 57 ≈ 71)  
 **Practical Limit**: 64 zones (from CPS UI limit)
+
+**Note**: Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
 
 ### Offset Calculation
 
@@ -968,8 +987,8 @@ func (z *Zone) ToBytes() []byte {
 ```python
 def read_all_zones(radio_session):
     """Read all zones from radio"""
-    # Read zone block (metadata 0x11)
-    zone_block_addr = find_block_by_metadata(radio_session, 0x11)
+    # Read zone block (metadata 0x5c)
+    zone_block_addr = find_block_by_metadata(radio_session, 0x5c)
     zone_data = radio_session.commands.read_memory(zone_block_addr, 4096)
     
     # Parse zones
@@ -1004,6 +1023,55 @@ print(f"Channels: {zone1.channel_numbers}")
 
 ## Scan List Structure (92 bytes)
 
+**Metadata**: 0x11 (17)  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Scan list definitions for channel scanning
+
+### Memory Organization
+
+**Entry Size**: 0x5C (92) bytes per scan list  
+**Max Entries**: 44 scan lists per 4KB block (4096 / 92 = 44)
+
+**Offset Calculation**:
+- Lists 1-44: `offset = 92 * ((scan_list - 1) % 44) + 16`
+- Lists 45+: `offset = 4096 * ((scan_list - 1) / 44) + 92 * ((scan_list - 1) % 44) + 0`
+
+**Note**: Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
+
+### Field Layout
+
+```
+┌─────────┬──────┬────────────────────┬─────────────────────────────────────┐
+│ Offset  │ Size │ Field Name         │ Description                          │
+├─────────┼──────┼────────────────────┼─────────────────────────────────────┤
+│ 0x00/16 │  16  │ scan_list_name     │ ASCII, null-term, 0xFF padding      │
+│ 0x10/32 │   3  │ unknown            │ Unknown (possibly frequency/settings) │
+│ 0x13/35 │   1  │ ctc_scan_mode      │ CTC Scan Mode (0-3)                 │
+│ 0x14/36 │   8  │ settings           │ Scan settings (TX mode, stay time)   │
+│ 0x1C/44 │  16  │ channel_list_1     │ First set of channels (16 bytes)    │
+│ 0x2C/60 │  16  │ channel_list_2     │ Second set of channels (16 bytes)    │
+│ 0x3C/76 │  16  │ channel_list_3     │ Third set of channels (16 bytes)     │
+│ 0x4C/92 │  16  │ channel_list_4     │ Fourth set of channels (16 bytes)    │
+└─────────┴──────┴────────────────────┴─────────────────────────────────────┘
+```
+
+### Field Values
+
+**CTC Scan Mode**:
+- 0 = Not Detection
+- 1 = Non Priority
+- 2 = Priority
+- 3 = Detection
+
+**Scan TX Mode**:
+- 0 = Current Channel
+- 1 = Last Active
+- 2 = Designed Channel
+
+**Maximum Channels per Scan List**: 16 channels (64 bytes total, format varies)
+
+### Code Structure (C/C++)
+
 ```c
 #pragma pack(push, 1)
 typedef struct {
@@ -1011,31 +1079,550 @@ typedef struct {
     // Note: Offset 16 for lists 1-44, 0 for lists 45+
     char scan_list_name[16];
     
-    // Settings
-    uint8_t ctc_scan_mode;  // 0-3
-    uint8_t settings[8];
+    // 0x10/32: Unknown (3 bytes)
+    uint8_t unknown[3];
     
-    // Channel list (up to 16 channels)
-    uint8_t channel_list[64];
+    // 0x13/35: CTC Scan Mode
+    uint8_t ctc_scan_mode;  // 0-3
+    
+    // 0x14/36: Settings (8 bytes)
+    uint8_t settings[8];  // Scan TX Mode, Stay Time, etc.
+    
+    // 0x1C/44-0x4C/92: Channel lists (64 bytes total, 4 × 16 bytes)
+    uint8_t channel_list[64];  // Up to 16 channels
     
 } dm32_scan_list_t;
 #pragma pack(pop)
+
+static_assert(sizeof(dm32_scan_list_t) == 92, "Scan list structure must be 92 bytes");
 ```
 
-## RX Group List Structure (109 bytes)
+---
+
+## RX Group List Structure
+
+**Metadata**: 0x0B (11)  
+**Block Size**: 24 KB (0x6000 bytes) = 6 pages × 4 KB each  
+**Purpose**: DMR receive group lists (talk groups)
+
+### Memory Organization
+
+**Count Field**: Offset 0-1 (2 bytes, little-endian) - number of RX groups  
+**Secondary Count**: Offset 2-3 (2 bytes)  
+**Flag Field**: Offset 4 (1 byte) - status flag
+
+**Entry Size**: 0x18 (24) bytes per RX group  
+**Entries per Page**: 0xAA (170) entries per 4KB page  
+**Max Entries**: 6 × 170 = **1020 RX groups**
+
+**Entry Calculation**:
+- **Page**: `page = ((entry_num - 1) / 0xAA) + 1`
+- **Offset in Page**: `offset = ((entry_num - 1) % 0xAA) * 0x18`
+- **Entry Base**: `buffer + page * 0x1000 + offset`
+
+**Note**: Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
+
+### Entry Structure (24 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 2 | Check value | Compared against validation constant |
+| +0x02 | 16 | Name data | Null-terminated, 0xFF indicates end |
+| +0x12 | 6 | Additional data | Extended fields |
+
+### Contact Mapping
+
+Each RX group can reference up to 32 contacts:
+- **First mapping**: Contact IDs at offset `0x100 + entry_num * 2` (2 bytes per entry)
+- **Second mapping**: Contact IDs at offset `0x740 + entry_num * 2` (2 bytes per entry)
+- **Entry mapping**: Offset `0xFE (254) + entry_num * 2` - maps to contact IDs
+- **Entry mapping 2**: Offset `0x740 (1856) + entry_num * 2` - secondary mapping
+
+Each contact reference is 2 bytes.
+
+### Code Structure (C/C++)
 
 ```c
 #pragma pack(push, 1)
 typedef struct {
-    // 0x00-0x0A: RX group name (11 bytes)
-    char rx_group_name[11];
+    // 0x00: Check value (2 bytes)
+    uint16_t check_value;
     
-    // 0x0B-0x0F: Settings/flags (5 bytes)
-    uint8_t settings[5];
+    // 0x02: Name data (16 bytes)
+    char name[16];  // Null-terminated, 0xFF indicates end
     
-    // 0x10-0x6C: Contact list (93 bytes = 31 contacts × 3 bytes each)
-    uint8_t contact_ids[93];  // BCD encoded, 3 bytes per contact
+    // 0x12: Additional data (6 bytes)
+    uint8_t additional_data[6];
     
-} dm32_rx_group_t;
+} dm32_rx_group_entry_t;
 #pragma pack(pop)
+
+static_assert(sizeof(dm32_rx_group_entry_t) == 24, "RX group entry must be 24 bytes");
 ```
+
+---
+
+## Additional Metadata Block Structures
+
+The following sections provide detailed byte-level parsing specifications for other metadata blocks. All metadata blocks are **4096 bytes (0x1000)** when read from the radio (except where noted). Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
+
+---
+
+## 0x02 - Frequency Adjustment/Calibration Data
+
+**Metadata**: 0x02  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Radio frequency calibration and adjustment data
+
+### Structure Overview
+
+The block contains arrays of frequency adjustment values used for radio calibration. Values are indexed by parameter number.
+
+### Field Layout
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| -4 (relative) | 4 | Frequency array 1 | Array of 4-byte frequency values (indexed by `param * 4`) |
+| 0x3C (60) | 4 | Frequency array 2 | Array of 4-byte frequency values (indexed by `param * 4`) |
+| 0x7E (126) | 2 | Value array 1 | Array of 2-byte values (indexed by `param * 2`) |
+| 0x9E (158) | 2 | Value array 2 | Array of 2-byte values (indexed by `param * 2`) |
+| 0xB0 (176) | 2 | Value array 3 | Array of 2-byte values (indexed by `param * 2`) |
+
+### Frequency Encoding
+
+Frequencies are stored as 4-byte BCD values, formatted as "XXX.XXXXXX" MHz strings.
+
+### Calibration Parameters
+
+- RX Frequency Adjust
+- TX Frequency Adjust
+- U/V 4FSK 1-5
+- U Low/Mid/High Power 1-5
+- V Low/Mid/High Power 1-5
+
+---
+
+## 0x03 - Digital Emergency Systems
+
+**Metadata**: 0x03  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: DMR digital emergency system configurations
+
+### Structure Overview
+
+**Entry Size**: 0x28 (40) bytes per emergency system  
+**Entry Base Offset**: 0x218 (536 bytes from buffer start)  
+**Max Entries**: ~37 entries ((4096 - 0x218) / 40 ≈ 37)
+
+**Entry Calculation**: `buffer + 0x218 + entry_num * 0x28`
+
+### Entry Structure (40 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 1 | Flag | Bit 0: enabled/disabled |
+| +0x01 | 2 | Unknown | Reserved |
+| +0x03 | 2 | Value 1 | 16-bit value (little-endian) |
+| +0x05 | 2 | Value 2 | 16-bit value (little-endian) |
+| +0x1F8 | 16 | Name | Unicode WCHAR string (8 DWORDs) |
+
+### Global Configuration Fields
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0x01 | 1 | Count/Index | Validates 1-32 |
+| 0x30 | 1 | Unknown | Validates 0-50 |
+| 0x31-0x33 | 3 | Numeric fields | Stored as `actual_value + 5` |
+| 0x34, 0x36 | 2 | Byte fields | Max 0x14 and 0x32 |
+| 0x37-0x3E | 8 | 16-bit values | Four 16-bit values (little-endian) |
+| 0x3F | 1 | Bit flags | Bit 0 and bit 1 |
+| 0x40 | 1 | Index/count | Stored as `actual_value + 1` |
+| 0x41-0x7F | 64 | Entry array | 16 entries × 4 bytes each |
+| 0x730-0x7F0 | 192 | Additional config | Extended configuration fields |
+
+### Name Encoding
+
+Unicode (WCHAR), 16 bytes (8 DWORDs) per name. Convert using `WideCharToMultiByte` / `MultiByteToWideChar`.
+
+### Field Values
+
+**Alarm Type**:
+- 0 = None
+- 1 = Only Whistle
+- 2 = Normal
+- 3 = Secret
+- 4 = Secret With Voice
+- 5 = Alarm Whistle
+
+**Alarm Mode**:
+- 0 = Emergency Alarm
+- 1 = Alarm Call
+- 2 = Emergency Call
+
+---
+
+## 0x04 - Embedded Information / Radio Names
+
+**Metadata**: 0x04  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Radio identification and embedded information
+
+### Structure Overview
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0x00 | 1 | Byte value | Configuration byte |
+| 0x01 | 14 | String field 1 | Stored as 4+4+4+2 byte chunks at offsets +1, +5, +9, +0xD |
+| 0x0F (15) | 14 | String field 2 | Stored as 4+4+4+2 byte chunks at offsets +0xF, +0x13, +0x17, +0x1B |
+| 0x1D (29) | 1 | Bit flags | Bit 0 flag |
+| 0x1E (30) | 1 | Byte value | Range 0-5, max 5 |
+| 0x20 (32) | 1 | Bit flags | Multiple flags: bits 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02 |
+
+### String Encoding
+
+14-byte fields, null-terminated. Value `0xFFFFFFFF` used as "empty" marker.
+
+---
+
+## 0x06 - DTMF Encode Data
+
+**Metadata**: 0x06  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: DTMF encoding configuration and code sequences
+
+### Structure Overview
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0x00-0xF0 | 256 | DTMF entries | 16 entries × 16 bytes each (indexed by `param * 0x10 + -0x10`, 1-based) |
+| 0x100 (256) | 1 | Byte value | Range 0-255, stored as `value + 0x0F` |
+| 0x101 | 1 | Byte value | Configuration |
+| 0x102 | 1 | Byte value | Configuration |
+| 0x103 | 1 | Byte value | Configuration |
+| 0x104 | 1 | Byte value | Range 0-255, stored as `value + 1` |
+| 0x105 | 1 | Bit flags | Bit 0 flag |
+| 0x106-0x108 | 3 | Duration/Interval | Numeric value (likely milliseconds) |
+| 0x109 | 1 | DTMF Group Code | Range 0-6, stored as `value + 9` |
+| 0x10A | 1 | DTMF Interval Sign | Range 0-5, stored as `value + 10` |
+| 0x10B | 1 | Byte value | Configuration |
+| 0x10C | 1 | DTMF Auto Ack | Range 0-2, stored as `value + 4` |
+| 0x10E | 1 | Byte value | Configuration |
+| 0x110, 0x120, 0x130, 0x140 | 64 | Additional DTMF codes | 4 more 16-byte DTMF code sequences |
+| 0x1FF | 1 | Final byte | Configuration byte |
+
+### DTMF Code Encoding
+
+Each DTMF digit stored as single byte:
+- **0-9**: 0x00-0x09
+- **A-D**: 0x0A-0x0D
+- **\***: 0x0E
+- **#**: 0x0F
+
+**Note**: Some documentation shows encoding as 0x30-0x39 for digits 0-9, but the actual storage uses 0x00-0x09.
+
+### Field Values
+
+**DTMF Group Code** (stored as `value + 9`):
+- 0 = Off
+- 1 = A
+- 2 = B
+- 3 = C
+- 4 = D
+- 5 = *
+- 6 = #
+
+**DTMF Interval Sign** (stored as `value + 10`):
+- 0 = A
+- 1 = B
+- 2 = C
+- 3 = D
+- 4 = *
+- 5 = #
+
+**DTMF Auto Ack** (stored as `value + 4`):
+- 0 = Off
+- 1 = Alert Tone
+- 2 = Alert Tone And Ack
+
+---
+
+## 0x07 - Configuration Header
+
+**Metadata**: 0x07  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Configuration region header/metadata
+
+### Structure Overview
+
+**Status**: Block is discovered via metadata but not actively read/parsed by the CPS software. Structure is unknown.
+
+**Possible Contents**:
+- Codeplug version information
+- Configuration structure metadata
+- Validation/checksum data
+- Region size/limits
+- Configuration flags
+
+**Note**: This appears to be a header/metadata block for the configuration region itself.
+
+---
+
+## 0x0A - Quick Text Messages
+
+**Metadata**: 0x0A  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Canned/predefined text messages
+
+### Structure Overview
+
+**Count Field**: Offset 0 (1 byte) - number of messages  
+**Entry Size**: 0x81 (129) bytes per message  
+**Entry Base**: Offset 0x80 (128) for entry 0  
+**Max Entries**: ~30 messages (floor((4096 - 128) / 129) = 30)
+
+**Entry Calculation**: `buffer + 0x80 + entry_num * 0x80` = `buffer + 0x80 * (entry_num + 1)`
+
+### Entry Structure (129 bytes)
+
+| Offset within entry | Size | Field | Description |
+|---------------------|------|-------|-------------|
+| +0x70 (112) | 2 | Check value | Compared against validation constant |
+| +0x70+2 (114) | 0x81 | Message text | Null-terminated, 0xFF indicates end |
+| +0xF (15) | 1 | Flag/status | Set to 0 when message is set |
+
+### Message Text Encoding
+
+- **If KM mode**: Uses encoding functions (FUN_004825e0, FUN_00482740, FUN_00482690)
+- **Otherwise**: Direct string copy (null-terminated, 0xFF indicates end)
+
+---
+
+
+## 0x0F - TX Contact Assignment
+
+**Metadata**: 0x0F  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: DMR transmit contact assignments per channel
+
+### Structure Overview
+
+**Entry Size**: 0x6D (109) bytes per channel assignment  
+**Max Entries**: ~37 entries (floor(4096 / 109) = 37)
+
+**Entry Calculation**: `buffer + entry_num * 0x6D`
+
+### Entry Structure (109 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 4 | Bitmask | 32 bits (little-endian) - contact selection/priority flags |
+| +0x04 | 1 | Status flag | Entry status |
+| +0x05 | 10 | Reserved | Unknown/reserved |
+| +0x0F | 1 | Entry flag | Entry validation flag |
+
+### Additional Entry Fields
+
+These fields are stored **before** the entry base:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| -0x5D (entry_base - 0x5D) | 1 | Validation flag | Entry validation flag |
+| -0x5C (entry_base - 0x5C) | 11 | Contact name | Null-terminated, 0xFF indicates end |
+| -0x54 (entry_base - 0x54) | Variable | Contact ID slots | 3 bytes per slot, multiple slots per entry |
+
+### Contact ID Slot Format
+
+Each slot is 3 bytes, stored as `[byte2][byte1][byte0]` (little-endian DMR ID).
+
+---
+
+## 0x10 - Analog Emergency Systems
+
+**Metadata**: 0x10  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Analog emergency system configurations
+
+### Structure Overview
+
+**Entry Size**: 0x24 (36) bytes per entry  
+**Entry Base Offset**: 0xAC (172 bytes from buffer start)  
+**Max Entries**: ~108 entries ((4096 - 172) / 36 ≈ 108)
+
+**Entry Calculation**: `buffer + 0xAC + entry_num * 0x24`
+
+### Entry Structure (36 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 17 | Name | Null-terminated string, max 17 bytes including terminator |
+| +0x11 | 1 | Padding | Reserved |
+| +0xBD | 1 | Alarm Type | 0-4: None, Only Whistle, Normal, Secret, Secret With Voice |
+| +0xBE | 1 | Alarm Mode | 0-1: Emergency Alarm, Alarm Call, Emergency Call |
+| +0xBF | 1 | Signalling | 0-3: BDC1200 1-4 |
+| +0xC0 | 2 | Revert Channel | Little-endian, 1-16, stored as `value - 1` |
+| +0xC2 | 1 | Squelch Mode | 0-1: Carrier, CTC, stored as `value + 1` |
+| +0xC3 | 1 | ID Type | 0-1: None, BDC1200, stored as `value + 1` |
+| +0xC4 | 1 | Flags | Status byte |
+| +0xC5 | 2 | Frequency/ID | 16-bit value (little-endian) |
+| +0xC7 | 1 | Flags | Status byte (bit 0: enabled/disabled) |
+
+**Note**: The offsets shown (0xBD, 0xBE, etc.) appear to be relative to a different base. The actual structure uses the 36-byte entry layout starting at `buffer + 0xAC + entry_num * 0x24`.
+
+### Additional Structures
+
+- **Secondary entry structure**: Offset `-0x14 + entry*0x14` (20 bytes, for contact/ID mapping)
+- **Tertiary entry structure**: Offset `0x2D5 + entry*0x2C` (44 bytes, for extended data)
+
+### Field Values
+
+**Alarm Type**:
+- 0 = None
+- 1 = Only Whistle
+- 2 = Normal
+- 3 = Secret
+- 4 = Secret With Voice
+
+**Alarm Mode**:
+- 0 = Emergency Alarm
+- 1 = Alarm Call
+- 2 = Emergency Call
+
+**Signalling**:
+- 0-3 = BDC1200 1-4
+
+**Squelch Mode**:
+- 0 = Carrier
+- 1 = CTC
+
+**ID Type**:
+- 0 = None
+- 1 = BDC1200
+
+---
+
+## 0x65 - Roaming Zones
+
+**Metadata**: 0x65  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: DMR roaming zone configurations
+
+### Structure Overview
+
+**Entry Size**: 0x21 (33) bytes per entry  
+**Entry Base Offset**: 0x00 (entries start at buffer base)  
+**Max Entries**: ~124 entries (4096 / 33 ≈ 124)
+
+**Entry Calculation**: `buffer + entry_num * 0x21`
+
+### Entry Structure (33 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 4 | Count/value | DWORD (little-endian) |
+| +0x01 | 1 | Bit flag | Bit 0: enabled/disabled |
+| +0x02 | 1 | Value | Stored as `value + 1` |
+| +0x03 | 1 | Value | Stored as `value + 1`, max 0x40 |
+| +0x10 | 16 | Name | Null-terminated string, max 16 bytes including terminator |
+| +0x20 | 1 | Channel count | Channel count or index |
+| +0x21 | 16 | Channel list | Channel list or additional data |
+
+### Maximum Channels per Zone
+
+16 channels maximum per roaming zone.
+
+---
+
+## 0x66 - Roaming Channels
+
+**Metadata**: 0x66  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: DMR roaming channel configurations
+
+### Structure Overview
+
+**Entry Size**: 0x1A (26) bytes per entry  
+**Entry Base Offset**: 0x00 (entries start at buffer base)  
+**Max Entries**: ~157 entries (4096 / 26 ≈ 157)
+
+**Count Storage**: Offset 0xFF0 (1 byte, stores count, max 0x96 = 150)
+
+**Entry Calculation**: `buffer + entry_num * 0x1A`
+
+### Entry Structure (26 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 16 | Name | Null-terminated string, max 16 bytes including terminator |
+| +0x10 | 4 | RX Frequency | BCD encoded, 4 bytes |
+| +0x14 | 4 | TX Frequency | BCD encoded, 4 bytes |
+| +0x18 | 1 | Color Code | DMR color code (0-15) |
+| +0x19 | 1 | Time Slot | DMR time slot (1 or 2) |
+
+### Frequency Encoding
+
+Frequencies stored in BCD (Binary-Coded Decimal) format, 4 bytes per frequency. The encoding converts frequency strings (e.g., "145.500000") to BCD representation. See [06-ENCODING.md](06-ENCODING.md) for BCD encoding details.
+
+---
+
+## 0x67 - DMR Radio ID List
+
+**Metadata**: 0x67  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: Radio's own DMR Radio IDs
+
+### Structure Overview
+
+**Entry Size**: 0x10 (16) bytes per entry  
+**Entry Base Offset**: 0x00 (entries start at buffer base)  
+**Max Entries**: 256 entries (4096 / 16 = 256)
+
+**Count Storage**: Offset 0 (4 bytes, DWORD, little-endian, stores count)
+
+**Entry Calculation**: `buffer + entry_num * 0x10`
+
+### Entry Structure (16 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0x00 | 3 | DMR Radio ID | 3 bytes, stored as BCD or binary |
+| +0x03 | 12 | Name | Null-terminated string, max 12 bytes including terminator |
+
+### ID Encoding
+
+DMR Radio IDs are stored as 3 bytes. The format function uses `"%02X %02X %02X"` to display them as hex (e.g., "01 23 45" for ID 0x012345). The set function converts a 6-digit string to 3 bytes.
+
+**Important Note**: This stores the **radio's own DMR Radio IDs** - the IDs that identify this specific radio when transmitting on digital channels. This is different from the main contact/ID database (V-frame 0x0F) which contains all known contacts/talkgroups.
+
+---
+
+## Data Encoding Reference
+
+### String Encodings
+
+- **ASCII**: Null-terminated, 0xFF padding, empty = 0xFF 0xFF
+- **Unicode (WCHAR)**: 16 bytes (8 DWORDs) per name, converted via `WideCharToMultiByte` / `MultiByteToWideChar`
+
+### Number Encodings
+
+- **BCD (Binary-Coded Decimal)**: Each decimal digit represented by its own binary sequence (used for frequencies). See [06-ENCODING.md](06-ENCODING.md) for details.
+- **Little-Endian**: Multi-byte values stored with least significant byte first
+- **DWORD**: 32-bit value (4 bytes, little-endian)
+- **WORD**: 16-bit value (2 bytes, little-endian)
+
+### Special Values
+
+- **0xFF**: Often used as padding or "empty" marker
+- **0x00**: Often used as null terminator or empty value
+- **Stored Value Offsets**: Some values are stored as `actual_value + offset` (e.g., `value + 1`, `value + 5`). Always subtract the offset when reading.
+
+---
+
+## Notes
+
+1. All blocks are 4 KB (4096 bytes) when read from the radio
+2. Entry offsets are relative to the buffer start unless otherwise specified
+3. Some entries have negative offsets (e.g., `entry_base - 0x5D`) which means they're stored before the entry base
+4. Multi-byte values are little-endian unless otherwise specified
+5. String fields are typically null-terminated with 0xFF padding
+6. Maximum entry counts are calculated based on buffer size and entry size, but actual usage may be less
+7. Block addresses must be discovered via metadata discovery - never hardcode addresses

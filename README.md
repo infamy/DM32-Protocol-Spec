@@ -16,7 +16,7 @@ Complete protocol specification and memory map reference for the Baofeng DM-32UV
 - **[04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)** - Memory organization and addressing
 
 ### Data Structures
-- **[05-DATA-STRUCTURES.md](05-DATA-STRUCTURES.md)** - Channel, zone, and configuration structures
+- **[05-DATA-STRUCTURES.md](05-DATA-STRUCTURES.md)** - Channel, zone, and all metadata block structures
 - **[06-ENCODING.md](06-ENCODING.md)** - BCD frequency and CTCSS/DCS encoding schemes
 
 ### Additional Resources
