@@ -35,20 +35,6 @@ The DM-32UV uses a **16MB address space** with data organized in **4KB blocks**.
 **Blocks**: 200 × 4KB blocks  
 **Organization**: Metadata-driven (see Metadata System below)
 
-### Memory Map Table
-
-| Address Range | Size | Metadata | Purpose |
-|---------------|------|----------|---------|
-| 0x001000-0x001FFF | 4 KB | 0x07 | Config header |
-| 0x005000-0x005FFF | 4 KB | 0x0A | **Canned messages** |
-| 0x007000-0x007FFF | 4 KB | 0x06 | Empty/unused (varies by radio) |
-| 0x00C000-0x00CFFF | 4 KB | 0x10 | **Emergency systems** |
-| 0x00F000-0x00FFFF | 4 KB | 0x0F | **RX Group Lists (DMR)** |
-| 0x011000-0x011FFF | 4 KB | 0x03 | Unknown (mostly 0xFF) |
-| 0x014000-0x014FFF | 4 KB | 0x11 | **Scan Lists** |
-| *varies* | 4 KB | 0x5c | **ZONES** |
-| **0x01B000-0x0C8FFF** | **~718 KB** | **0x12-0x41** | **CHANNELS (48 blocks)** |
-
 ## Metadata System
 
 ### How It Works
@@ -100,20 +86,42 @@ graph TD
 
 ### Metadata Values Reference
 
-#### Configuration Blocks
+**⚠️ CRITICAL**: All block addresses are **dynamically allocated** and **vary between radios and firmware versions**. Block locations must be discovered by reading metadata bytes (offset `0xFFF`) from each 4KB block in the main config range. **Never hardcode addresses** - always use metadata discovery.
 
-| Metadata | Hex | Purpose | Example Address |
-|----------|-----|---------|-----------------|
-| 0x02 | 0x02 | Unknown config | - |
-| 0x03 | 0x03 | Unknown (mostly 0xFF) | 0x011000 |
-| 0x06 | 0x06 | Empty/unused (varies by radio) | 0x007000 |
-| 0x07 | 0x07 | Config header | 0x001000 |
-| 0x0A | 0x0A | **Canned messages** | 0x005000 |
-| 0x0F | 0x0F | **RX Group Lists (DMR talk groups)** | 0x00F000 |
-| 0x10 | 0x10 | **Emergency systems** | 0x00C000 |
-| 0x11 | 0x11 | **Scan Lists** | 0x014000 |
-| 0x5c | 0x5c | **ZONES** | *varies* |
-| 0x65-0x67 | 0x65-0x67 | Extended config | Various |
+#### Complete Metadata Value List (Numerical Order)
+
+All metadata values discovered from probe data, organized by value. All blocks are 4KB in size.
+
+| Metadata | Hex | Dec | Purpose |
+|----------|-----|-----|---------|
+| **0x02** | 0x02 | 2 | **Frequency Adjustment/Calibration Data** |
+| **0x03** | 0x03 | 3 | **Digital Emergency Systems** |
+| **0x04** | 0x04 | 4 | **Embedded Information / Radio Names** |
+| **0x05** | 0x05 | 5 | **Not Found / Unused** |
+| **0x06** | 0x06 | 6 | **DTMF Encode Data** |
+| **0x07** | 0x07 | 7 | **Configuration Header** |
+| **0x08** | 0x08 | 8 | **Reserved** |
+| **0x09** | 0x09 | 9 | **Reserved** |
+| **0x0A** | 0x0A | 10 | **Quick Text Messages** |
+| **0x0B** | 0x0B | 11 | **RX Group List** |
+| **0x0C** | 0x0C | 12 | **Reserved** |
+| **0x0D** | 0x0D | 13 | **Reserved** |
+| **0x0E** | 0x0E | 14 | **Reserved** |
+| **0x0F** | 0x0F | 15 | **TX Contact Assignment** |
+| **0x10** | 0x10 | 16 | **Analog Emergency Systems** |
+| **0x11** | 0x11 | 17 | **Scan Lists** |
+| **0x12-0x41** | 0x12-0x41 | 18-65 | **Channel blocks 0-47** (48 blocks, supports ~4,080 channels) |
+| **0x42** | 0x42 | 66 | **Reserved** |
+| **0x43** | 0x43 | 67 | **Reserved** |
+| **0x5A** | 0x5A | 90 | **Reserved** |
+| **0x5c** | 0x5c | 92 | **Zones** |
+| **0x65** | 0x65 | 101 | **Roaming Zones** |
+| **0x66** | 0x66 | 102 | **Roaming Channels** |
+| **0x67** | 0x67 | 103 | **DMR Radio ID List** |
+| **0x6A** | 0x6A | 106 | **Reserved** |
+| **0x6C** | 0x6C | 108 | **Reserved** |
+| **0x6D** | 0x6D | 109 | **Reserved** |
+| **0x75** | 0x75 | 117 | **Reserved** |
 
 #### Channel Blocks (Sequential)
 
@@ -140,19 +148,23 @@ graph TD
 
 **⚠️ CRITICAL**: Block addresses shown in the tables above are **examples only** and **vary between radios and firmware versions**. The radio uses dynamic memory allocation within the main config block (0x001000-0x0C8FFF). Always use metadata discovery rather than hardcoded addresses.
 
-**Verified Metadata Corrections** (based on actual radio analysis):
+**Key Metadata Discoveries** (based on actual radio analysis and CPS code reverse engineering):
 
-- **Zones**: Metadata `0x5c` (92 decimal)
-  - Structure: 57 bytes per zone
-  - Capacity: Up to ~71 zones per 4KB block (4096 / 57)
-  - Verified by finding zone names ("DEFCON", "Vector", "FRS") in blocks with metadata `0x5c`
-
-- **Scan Lists**: Metadata `0x11` (17 decimal)
-  - Structure: 92 bytes per scan list
+- **0x02 - Frequency Adjustment/Calibration Data**: Radio calibration settings
+- **0x03 - Digital Emergency Systems**: DMR emergency system configurations
+- **0x04 - Embedded Information / Radio Names**: Radio identification and embedded data
+- **0x06 - DTMF Encode Data**: DTMF encoding configuration
+- **0x0A - Quick Text Messages**: Canned/predefined text messages
+- **0x0B - RX Group List**: DMR receive group lists (talk groups)
+- **0x0F - TX Contact Assignment**: DMR transmit contact assignments
+- **0x10 - Analog Emergency Systems**: Analog emergency system configurations
+- **0x11 - Scan Lists**: Scan list definitions (92 bytes per list)
   - Layout: Lists 1-44 start at offset 16, lists 45+ start at offset 0
-  - Verified by finding scan list names ("CZBB.List 2", "BCF.List 1") in blocks with metadata `0x11`
-
-- **Metadata `0x06`**: Appears to be empty/unused in many radios. May be used for other purposes or in different firmware versions.
+- **0x5c - Zones**: Zone definitions (57 bytes per zone)
+  - Capacity: Up to ~71 zones per 4KB block (4096 / 57)
+- **0x65 - Roaming Zones**: DMR roaming zone configurations
+- **0x66 - Roaming Channels**: DMR roaming channel configurations
+- **0x67 - DMR Radio ID List**: DMR radio ID database
 
 **Discovery Method**: 
 1. Read all blocks in the main config range (via V-frame 0x0A)
