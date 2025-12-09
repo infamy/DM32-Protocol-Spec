@@ -113,6 +113,7 @@ All metadata values discovered from probe data, organized by value. All blocks a
 | **0x12-0x41** | 0x12-0x41 | 18-65 | **Channel blocks 0-47** (48 blocks, supports ~4,080 channels) |
 | **0x42** | 0x42 | 66 | **Reserved** |
 | **0x43** | 0x43 | 67 | **Reserved** |
+| **0x44-0x48** | 0x44-0x48 | 68-72| **Talk group blocks 0-4** (5 blocks, 170 talk groups each, 850 TGs total) |
 | **0x5A** | 0x5A | 90 | **Reserved** |
 | **0x5c** | 0x5c | 92 | **Zones** |
 | **0x65** | 0x65 | 101 | **Roaming Zones** |
