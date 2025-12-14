@@ -5,6 +5,8 @@ Complete protocol specification and memory map reference for the Baofeng DM-32UV
 > **⚠️ Documentation Notice**  
 > The reverse engineering and protocol analysis was performed by [Infamy](https://github.com/infamy). AI was used to organize and format the raw research notes into structured, digestible documentation, with manual review and corrections throughout.
 
+# Checkout a working prototype using this at [NeonPLug](https://neonplug.app)
+
 ## 📁 Documentation Structure
 
 ### Protocol Specification
