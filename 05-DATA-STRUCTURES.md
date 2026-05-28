@@ -8,9 +8,9 @@ This document is organized as follows:
 
 1. **Primary Structures** - Detailed specifications for the most commonly used structures:
    - Channel Structure (48 bytes)
-   - Zone Structure (57 bytes)
-   - Scan List Structure (92 bytes)
-   - RX Group List Structure
+   - Zone Structure (145 bytes)
+   - Scan List Structure (57 bytes)
+   - RX Group List Structure (metadata 0x0F, 109 bytes per entry)
 
 2. **Additional Metadata Blocks** - Byte-level parsing for other metadata block types (0x02, 0x03, 0x04, 0x06, 0x07, 0x0A, 0x0F, 0x10, 0x65, 0x66, 0x67)
 
@@ -45,7 +45,7 @@ Padding: 0xFF for unused/empty fields
 │        │ 00 50 54 14 = 145.450 MHz                       │
 ├────────┼─────────────────────────────────────────────────┤
 │ 0x18   │ Mode & Flags (8 bytes)                          │
-│        │ Power, bandwidth, scan, etc.                    │
+│        │ Mode, forbid TX, power level, bandwidth, scan   │
 ├────────┼─────────────────────────────────────────────────┤
 │ 0x20   │ Color Code (1 byte)                             │
 ├────────┼─────────────────────────────────────────────────┤
@@ -69,13 +69,13 @@ Padding: 0xFF for unused/empty fields
 │ 0x00-0F │  16  │ channel_name       │ ASCII, null-term, 0xFF padding       │
 │ 0x10-13 │   4  │ rx_frequency       │ BCD encoded, little-endian           │
 │ 0x14-17 │   4  │ tx_frequency       │ BCD encoded, little-endian           │
-│ 0x18    │   1  │ mode_flags         │ Mode, TX forbid, busy lock, lone work│
+│ 0x18    │   1  │ mode_flags         │ Mode, TX forbid, power level, lone   │
 │ 0x19    │   1  │ scan_bandwidth     │ Bandwidth, scan add, scan list ID    │
 │ 0x1A    │   1  │ talkaround_aprs    │ Talkaround forbid, APRS, reverse     │
 │ 0x1B    │   1  │ emergency_settings │ Emergency indicator, ack, system ID  │
-│ 0x1C    │   1  │ power_aprs         │ Power level, APRS report mode        │
+│ 0x1C    │   1  │ squelch_aprs       │ Squelch level (bits 7-4), APRS mode  │
 │ 0x1D    │   1  │ analog_features    │ VOX, scramble, compander, talkback   │
-│ 0x1E    │   1  │ squelch_level      │ Squelch level (0-255)                │
+│ 0x1E    │   1  │ reserved_1e        │ Unknown/Reserved (not used by CPS)   │
 │ 0x1F    │   1  │ ptt_id_settings    │ PTT ID display, PTT ID value         │
 │ 0x20    │   1  │ color_code         │ DMR color code (0-15)                │
 │ 0x21-22 │   2  │ rx_ctcss_dcs       │ RX CTCSS tone or DCS code            │
@@ -86,7 +86,7 @@ Padding: 0xFF for unused/empty fields
 │ 0x28    │   1  │ reserved_1         │ Not accessed by CPS                  │
 │ 0x29    │   1  │ ptt_id_type        │ PTT ID type (OFF/BOT/EOT/BOTH)       │
 │ 0x2A    │   1  │ unknown_setting    │ Purpose unknown                      │
-│ 0x2B    │   1  │ contact_id         │ Contact list reference (1-250)       │
+│ 0x2B    │   1  │ dmr_radio_id_index │ DMR Radio ID index (0xFF=None)       │
 │ 0x2C-2F │   4  │ reserved_2         │ Not accessed by CPS, padding         │
 └─────────┴──────┴────────────────────┴──────────────────────────────────────┘
 ```
@@ -109,7 +109,7 @@ typedef struct {
     uint8_t mode_flags;
     // Bits 7-4: Channel mode (0=Analog, 1=Digital, 2=Fixed Analog, 3=Fixed Digital)
     // Bit 3: Forbid TX (0=Allow, 1=Forbid)
-    // Bits 2-1: Busy lock (0=Off, 1=Carrier, 2=Repeater)
+    // Bits 2-1: Power level (0=Low, 1=Medium, 2=High)
     // Bit 0: Lone worker (0=Off, 1=On)
     
     // 0x19: Scan and bandwidth
@@ -133,11 +133,11 @@ typedef struct {
     // Bit 6: Emergency ack (0=Off, 1=On)
     // Bits 4-0: Emergency system ID (0-31)
     
-    // 0x1C: Power and APRS
-    uint8_t power_aprs;
-    // Bits 7-4: Power level (0=Low, 1=Middle, 2=High)
+    // 0x1C: Squelch and APRS
+    uint8_t squelch_aprs;
+    // Bits 7-4: Squelch level (0-15)
     // Bits 3-2: APRS report mode (0=Off, 1=Digital, 2=Analog)
-    // Bits 1-0: Unknown
+    // Bits 1-0: Unknown/Reserved
     
     // 0x1D: Analog features
     uint8_t analog_features;
@@ -147,8 +147,10 @@ typedef struct {
     // Bit 4: Talkback (0=Off, 1=On)
     // Bits 3-0: Unknown setting
     
-    // 0x1E: Squelch level
-    uint8_t squelch_level;  // 0-255
+    // 0x1E: Unknown/Reserved
+    // NOTE: Squelch level is at byte 0x1C bits 7-4, NOT here.
+    // This byte's purpose is unconfirmed; it is not used by CPS software.
+    uint8_t reserved_1e;
     
     // 0x1F: PTT ID settings
     uint8_t ptt_id_settings;
@@ -195,8 +197,13 @@ typedef struct {
     // 0x2A: Unknown setting
     uint8_t unknown_setting;
     
-    // 0x2B: Contact/name ID
-    uint8_t contact_id;  // 0-249 (displayed as 1-250)
+    // 0x2B: DMR Radio ID index
+    // 0x00-0xF9: Index into DMR Radio ID list (0=first entry)
+    // 0xFF: None (no DMR Radio ID assigned)
+    // NOTE: This is NOT a contact list reference; it selects which of the
+    // radio's own DMR IDs to use for this channel's TX. TX contact assignment
+    // is stored separately in metadata blocks 0x42 (ch 1-2048) and 0x43 (ch 2049+/VFOs).
+    uint8_t dmr_radio_id_index;
     
     // 0x2C-0x2F: Reserved
     uint8_t reserved_2[4];
@@ -216,7 +223,7 @@ static_assert(sizeof(dm32_channel_t) == 48, "Channel structure must be 48 bytes"
 |------|------|-------|--------|
 | 7-4  | 0xF0 | Channel Mode | 0=Analog, 1=Digital, 2=Fixed Analog, 3=Fixed Digital |
 | 3    | 0x08 | Forbid TX | 0=Allow, 1=Forbid |
-| 2-1  | 0x06 | Busy Lock | 0=Off, 1=Carrier, 2=Repeater |
+| 2-1  | 0x06 | Power Level | 0=Low, 1=Medium, 2=High |
 | 0    | 0x01 | Lone Worker | 0=Off, 1=On |
 
 ### Byte 0x19 (25): Scan and Bandwidth
@@ -246,13 +253,13 @@ static_assert(sizeof(dm32_channel_t) == 48, "Channel structure must be 48 bytes"
 | 6    | 0x40 | Emergency Ack | 0=Off, 1=On |
 | 4-0  | 0x1F | Emergency System ID | 0-31 |
 
-### Byte 0x1C (28): Power and APRS
+### Byte 0x1C (28): Squelch and APRS
 
 | Bits | Mask | Field | Values |
 |------|------|-------|--------|
-| 7-4  | 0xF0 | Power Level | 0=Low, 1=Middle, 2=High |
+| 7-4  | 0xF0 | Squelch Level | 0-15 |
 | 3-2  | 0x0C | APRS Report Mode | 0=Off, 1=Digital, 2=Analog |
-| 1-0  | 0x03 | Unknown | - |
+| 1-0  | 0x03 | Unknown/Reserved | - |
 
 ### Byte 0x1D (29): Analog Features
 
@@ -264,11 +271,13 @@ static_assert(sizeof(dm32_channel_t) == 48, "Channel structure must be 48 bytes"
 | 4    | 0x10 | Talkback | 0=Off, 1=On |
 | 3-0  | 0x0F | Unknown Setting | 0-15 |
 
-### Byte 0x1E (30): Squelch Level
+### Byte 0x1E (30): Unknown/Reserved
+
+**NOTE**: Squelch level is stored at **byte 0x1C bits 7-4**, not here. This byte is not accessed by CPS software; its purpose is unconfirmed.
 
 | Bits | Mask | Field | Values |
 |------|------|-------|--------|
-| 7-0  | 0xFF | Squelch Level | 0-255 |
+| 7-0  | 0xFF | Unknown/Reserved | — |
 
 ### Byte 0x1F (31): PTT ID Settings
 
@@ -359,15 +368,15 @@ static_assert(sizeof(dm32_channel_t) == 48, "Channel structure must be 48 bytes"
 **Type**: 8-bit value (0-255)  
 **Purpose**: Unknown - possibly DMR or signaling related
 
-### Byte 0x2B (43): Contact/Name ID
-
-**CPS Functions**: `sub_47AC20`, `sub_47ACC0`
+### Byte 0x2B (43): DMR Radio ID Index
 
 | Bits | Mask | Field | Values |
 |------|------|-------|--------|
-| 7-0  | 0xFF | Contact ID | 0-249 (displayed as 1-250 in UI) |
+| 7-0  | 0xFF | DMR Radio ID Index | 0-249 = index into Radio ID list; 0xFF = None |
 
-**Purpose**: References a contact from the contact list (250 contacts max)
+**Purpose**: Selects which of the radio's own DMR Radio IDs (metadata block 0x67) to use when transmitting on this channel. This is **not** a reference to the contact/talkgroup list.
+
+**TX Contact Assignment**: The DMR transmit contact for each channel is stored separately — see metadata blocks **0x42** (channels 1–2048) and **0x43** (channels 2049+, VFOs), 2 bytes per channel, little-endian.
 
 ### Bytes 0x2C-0x2F (44-47): Reserved
 
@@ -386,7 +395,7 @@ def parse_channel_flags(data: bytes) -> dict:
         # Byte 0x18
         'channel_mode': (data[0x18] >> 4) & 0x0F,
         'forbid_tx': bool(data[0x18] & 0x08),
-        'busy_lock': (data[0x18] >> 1) & 0x03,
+        'power_level': (data[0x18] >> 1) & 0x03,  # 0=Low, 1=Medium, 2=High
         'lone_worker': bool(data[0x18] & 0x01),
         
         # Byte 0x19
@@ -405,7 +414,7 @@ def parse_channel_flags(data: bytes) -> dict:
         'emergency_system_id': data[0x1B] & 0x1F,
         
         # Byte 0x1C
-        'power_level': (data[0x1C] >> 4) & 0x0F,
+        'squelch_level': (data[0x1C] >> 4) & 0x0F,  # 0-15 (NOT power level)
         'aprs_report_mode': (data[0x1C] >> 2) & 0x03,
         
         # Byte 0x1D
@@ -414,8 +423,7 @@ def parse_channel_flags(data: bytes) -> dict:
         'compander': bool(data[0x1D] & 0x20),
         'talkback': bool(data[0x1D] & 0x10),
         
-        # Byte 0x1E
-        'squelch_level': data[0x1E],
+        # Byte 0x1E — Unknown/Reserved (squelch is at 0x1C bits 7-4, NOT here)
         
         # Byte 0x1F
         'ptt_id_display': bool(data[0x1F] & 0x40),
@@ -440,7 +448,7 @@ def parse_channel_flags(data: bytes) -> dict:
         'ptt_id_type': (data[0x29] >> 4) & 0x0F,
         
         # Byte 0x2B
-        'contact_id': data[0x2B],
+        'dmr_radio_id_index': data[0x2B],  # 0xFF = None; NOT a contact list reference
     }
 ```
 
@@ -467,7 +475,7 @@ class DM32Channel:
     # Byte 0x18: Mode flags
     channel_mode: int  # 0=Analog, 1=Digital, 2=FixedAnalog, 3=FixedDigital
     forbid_tx: bool
-    busy_lock: int  # 0=Off, 1=Carrier, 2=Repeater
+    power_level: int  # 0=Low, 1=Medium, 2=High
     lone_worker: bool
     
     # Byte 0x19: Scan and bandwidth
@@ -485,8 +493,8 @@ class DM32Channel:
     emergency_ack: bool
     emergency_system_id: int  # 0-31
     
-    # Byte 0x1C: Power and APRS
-    power_level: int  # 0=Low, 1=Medium, 2=High
+    # Byte 0x1C: Squelch and APRS
+    squelch_level: int  # 0-15 (bits 7-4)
     aprs_report_mode: int  # 0=Off, 1=Digital, 2=Analog
     
     # Byte 0x1D: Analog features
@@ -495,8 +503,7 @@ class DM32Channel:
     compander: bool
     talkback: bool
     
-    # Byte 0x1E: Squelch
-    squelch_level: int  # 0-255
+    # Byte 0x1E: Unknown/Reserved (NOT squelch)
     
     # Byte 0x1F: PTT ID
     ptt_id_display: bool
@@ -539,7 +546,7 @@ class DM32Channel:
         mode_flags = data[0x18]
         channel_mode = (mode_flags >> 4) & 0x0F
         forbid_tx = bool(mode_flags & 0x08)
-        busy_lock = (mode_flags >> 1) & 0x03
+        power_level = (mode_flags >> 1) & 0x03  # 0=Low, 1=Medium, 2=High
         lone_worker = bool(mode_flags & 0x01)
         
         scan_bw = data[0x19]
@@ -578,7 +585,7 @@ class DM32Channel:
         data[0x18] = (
             ((self.channel_mode & 0x0F) << 4) |
             (0x08 if self.forbid_tx else 0) |
-            ((self.busy_lock & 0x03) << 1) |
+            ((self.power_level & 0x03) << 1) |  # bits 2-1: power level
             (0x01 if self.lone_worker else 0)
         )
         
@@ -615,7 +622,7 @@ type Channel struct {
     // 0x18: Mode flags
     ChannelMode  uint8 // 0=Analog, 1=Digital
     ForbidTX     bool
-    BusyLock     uint8 // 0=Off, 1=Carrier, 2=Repeater
+    PowerLevel   uint8 // 0=Low, 1=Medium, 2=High  (bits 2-1; NOT busy lock)
     LoneWorker   bool
     
     // 0x19: Scan and bandwidth
@@ -623,11 +630,8 @@ type Channel struct {
     ScanAdd      bool
     ScanListID   uint8 // 0-15
     
-    // 0x1C: Power
-    PowerLevel   uint8 // 0=Low, 1=Medium, 2=High
-    
-    // 0x1E: Squelch
-    SquelchLevel uint8 // 0-255
+    // 0x1C: Squelch (bits 7-4) and APRS (bits 3-2)
+    SquelchLevel uint8 // 0-15 (NOT byte 0x1E)
     
     // 0x20: DMR
     ColorCode    uint8 // 0-15
@@ -638,8 +642,10 @@ type Channel struct {
     TXCTCSSHz    float64
     TXDCSCode    string
     
-    // 0x2B: Contact ID
-    ContactID    uint8 // 0-249
+    // 0x2B: DMR Radio ID index
+    // 0xFF = None; selects which Radio ID (block 0x67) to use for TX.
+    // TX contact is in blocks 0x42/0x43, not here.
+    DMRRadioIDIndex uint8
 }
 
 // FromBytes parses a 48-byte channel record
@@ -660,7 +666,7 @@ func (c *Channel) FromBytes(data []byte) error {
     modeFlags := data[0x18]
     c.ChannelMode = (modeFlags >> 4) & 0x0F
     c.ForbidTX = (modeFlags & 0x08) != 0
-    c.BusyLock = (modeFlags >> 1) & 0x03
+    c.PowerLevel = (modeFlags >> 1) & 0x03  // bits 2-1: 0=Low, 1=Medium, 2=High
     c.LoneWorker = (modeFlags & 0x01) != 0
     
     scanBW := data[0x19]
@@ -668,17 +674,16 @@ func (c *Channel) FromBytes(data []byte) error {
     c.ScanAdd = (scanBW & 0x40) != 0
     c.ScanListID = (scanBW >> 2) & 0x0F
     
-    // Power and squelch
-    c.PowerLevel = (data[0x1C] >> 4) & 0x0F
-    c.SquelchLevel = data[0x1E]
+    // Squelch (bits 7-4 of byte 0x1C) and color code
+    c.SquelchLevel = (data[0x1C] >> 4) & 0x0F  // NOT byte 0x1E
     c.ColorCode = data[0x20]
     
     // CTCSS/DCS
     c.RXCTCSSHz, c.RXDCSCode = decodeCTCSSDCS(data[0x21:0x23])
     c.TXCTCSSHz, c.TXDCSCode = decodeCTCSSDCS(data[0x23:0x25])
     
-    // Contact ID
-    c.ContactID = data[0x2B]
+    // DMR Radio ID index
+    c.DMRRadioIDIndex = data[0x2B]
     
     return nil
 }
@@ -703,24 +708,23 @@ func (c *Channel) ToBytes() []byte {
     // Flags
     data[0x18] = (c.ChannelMode << 4) | 
                  (boolToByte(c.ForbidTX) << 3) |
-                 (c.BusyLock << 1) |
+                 (c.PowerLevel << 1) |   // bits 2-1: power level
                  boolToByte(c.LoneWorker)
     
     data[0x19] = (c.Bandwidth << 7) |
                  (boolToByte(c.ScanAdd) << 6) |
                  (c.ScanListID << 2)
     
-    // Power, squelch, color code
-    data[0x1C] = c.PowerLevel << 4
-    data[0x1E] = c.SquelchLevel
+    // Squelch (bits 7-4 of 0x1C) and color code
+    data[0x1C] = c.SquelchLevel << 4  // NOT 0x1E
     data[0x20] = c.ColorCode
     
     // CTCSS/DCS
     copy(data[0x21:0x23], encodeCTCSSDCS(c.RXCTCSSHz, c.RXDCSCode))
     copy(data[0x23:0x25], encodeCTCSSDCS(c.TXCTCSSHz, c.TXDCSCode))
     
-    // Contact ID
-    data[0x2B] = c.ContactID
+    // DMR Radio ID index
+    data[0x2B] = c.DMRRadioIDIndex
     
     return data
 }
@@ -733,7 +737,7 @@ func boolToByte(b bool) uint8 {
 }
 ```
 
-## Zone Structure (57 bytes)
+## Zone Structure (145 bytes)
 
 Zones group channels together for organizational purposes.
 
@@ -741,47 +745,45 @@ Zones group channels together for organizational purposes.
 
 **Metadata**: 0x5c (92)  
 **Block Size**: 4 KB (0x1000 bytes)  
-**Capacity**: ~71 zones maximum (4096 / 57 ≈ 71)  
-**Practical Limit**: 64 zones (from CPS UI limit)
+**Capacity**: ~28 zones per 4KB block (4080 bytes usable / 145 bytes per zone)  
+**Max Channels per Zone**: 64
 
 **Note**: Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
 
 ### Offset Calculation
 
-**Formula**: `57 * zone_number - 56`
+**Block header**: 16 bytes at the start of the 4KB block (purpose unknown/reserved).
+
+**Formula**: `16 + (zone_number - 1) * 145`
 
 Zones are 1-indexed (zone 1, zone 2, etc.)
 
 **Examples**:
-- Zone 1: `57 * 1 - 56 = 1` (offset 0x001)
-- Zone 2: `57 * 2 - 56 = 58` (offset 0x03A)
-- Zone 64: `57 * 64 - 56 = 3592` (offset 0xE08)
-
-**CPS Code Reference**:
-```c
-// Get zone name (sub_47B810)  
-v2 = (char *)dword_4E80E8 + 38 * a2 + 19 * a2 - 56;  // = 57 * a2 - 56
-// Reads first 11 bytes as name
-```
+- Zone 1: `16 + (1 - 1) * 145 = 16` (offset 0x010)
+- Zone 2: `16 + (2 - 1) * 145 = 161` (offset 0x0A1)
+- Zone 28: `16 + (28 - 1) * 145 = 3931` (offset 0xF5B)
 
 ### Field Layout
 
 ```
-┌─────────┬──────┬──────────────┬─────────────────────────────────────┐
-│ Offset  │ Size │ Field        │ Description                         │
-├─────────┼──────┼──────────────┼─────────────────────────────────────┤
-│ 0x00-0A │  11  │ zone_name    │ ASCII, null-term, 0xFF padding      │
-│ 0x0B-38 │  46  │ channel_list │ Up to 64 channel numbers (see below)│
-└─────────┴──────┴──────────────┴─────────────────────────────────────┘
+┌─────────┬──────┬────────────────────┬──────────────────────────────────────┐
+│ Offset  │ Size │ Field              │ Description                          │
+├─────────┼──────┼────────────────────┼──────────────────────────────────────┤
+│ 0x00-0A │  11  │ zone_name          │ ASCII, null-term, 0xFF padding       │
+│ 0x0B-0F │   5  │ padding            │ 0xFF padding                         │
+│ 0x10    │   1  │ channel_count      │ Number of channels in this zone      │
+│ 0x11-90 │ 128  │ channel_list       │ Up to 64 channel numbers, 2 bytes LE │
+└─────────┴──────┴────────────────────┴──────────────────────────────────────┘
+Total: 145 bytes
 ```
 
 ### Zone Name Encoding
 
-- **Length**: 11 bytes maximum
+- **Length**: 11 bytes maximum (10 chars + null terminator)
 - **Format**: ASCII string
 - **Termination**: Null-terminated (0x00)
 - **Padding**: 0xFF for unused bytes after null
-- **Empty zone**: 0xFF 0xFF... (all 0xFF)
+- **Empty zone**: all 0xFF or all 0x00
 
 **Example**:
 ```
@@ -791,29 +793,20 @@ v2 = (char *)dword_4E80E8 + 38 * a2 + 19 * a2 - 56;  // = 57 * a2 - 56
 
 ### Channel List Format
 
-**Confirmed Format**: 2 bytes per channel × 23 slots = 46 bytes
-
-The 46-byte channel list stores up to **23 channel numbers** (not 64 as the UI might suggest).
-
-**Storage Details:**
-- Each channel number: 16-bit little-endian value
-- Empty slot: 0x0000
-- Valid range: 0x0001-0x0FA0 (channels 1-4000)
-- Total slots: 23 (46 bytes ÷ 2 bytes per channel)
-
-**Note on UI Limit:** The CPS software UI may show a limit of 64 channels per zone, but the actual storage format only supports 23 channels. This is a limitation of the zone structure size (57 bytes total, with 11 bytes for name and 46 bytes for channels).
-
-**Channel Number Encoding:**
-- 0x0000 = Empty slot
-- 0x0001-0x0FA0 = Channel 1-4000
-- Little-endian format
+- **Count byte** (offset 0x10 within zone): number of channels stored
+- **Channel entries** start at offset 0x11 within zone
+- **Entry format**: 16-bit little-endian channel number
+- **Max slots**: 64 (128 bytes / 2 bytes per channel)
+- **Empty slot**: 0x0000 (also terminates parsing if count is unreliable)
+- **Valid range**: 0x0001–0x0FA0 (channels 1–4000)
 
 **Example** (3 channels: 1, 15, 100):
 ```
-Offset 0x0B: 01 00  15 00  64 00  00 00  00 00 ...
-             Ch1    Ch15   Ch100  Empty  Empty
-             
-Remaining 20 slots: 00 00 00 00 ... (all empty)
+Offset 0x10: 03           ← channel count = 3
+Offset 0x11: 01 00        ← Channel 1
+Offset 0x13: 0F 00        ← Channel 15
+Offset 0x15: 64 00        ← Channel 100
+Offset 0x17: 00 00 ...    ← empty / padding
 ```
 
 ### Code Structure (C/C++)
@@ -824,14 +817,19 @@ typedef struct {
     // 0x00-0x0A: Zone name (11 bytes)
     char zone_name[11];
     
-    // 0x0B-0x38: Channel list (46 bytes)
-    // Format: Up to 23 channel numbers (2 bytes each, little-endian)
-    uint16_t channel_numbers[23];  // 0 = empty slot
+    // 0x0B-0x0F: Padding (5 bytes, 0xFF)
+    uint8_t padding[5];
+    
+    // 0x10: Channel count
+    uint8_t channel_count;  // 0-64
+    
+    // 0x11-0x90: Channel list (128 bytes = 64 × 2-byte channel numbers)
+    uint16_t channel_numbers[64];  // 0 = empty slot, little-endian
     
 } dm32_zone_t;
 #pragma pack(pop)
 
-static_assert(sizeof(dm32_zone_t) == 57, "Zone structure must be 57 bytes");
+static_assert(sizeof(dm32_zone_t) == 145, "Zone structure must be 145 bytes");
 ```
 
 ### Code Structure (Python)
@@ -843,7 +841,7 @@ import struct
 
 @dataclass
 class DM32Zone:
-    """DM32 Zone Structure (57 bytes)"""
+    """DM32 Zone Structure (145 bytes)"""
     
     zone_name: str
     channel_numbers: List[int]  # Up to 64 channels (1-4000)
@@ -854,47 +852,51 @@ class DM32Zone:
         if len(data) < 4096:
             raise ValueError("Zone data block must be 4096 bytes")
         
-        # Calculate offset for this zone
-        offset = 57 * zone_number - 56
-        if offset + 57 > 4096:
+        # 16-byte block header, then 145-byte zone entries
+        offset = 16 + (zone_number - 1) * 145
+        if offset + 145 > 4096:
             raise ValueError(f"Zone {zone_number} offset out of range")
         
-        zone_data = data[offset:offset+57]
+        zone_data = data[offset:offset+145]
         
-        # Parse name (11 bytes)
+        # Parse name (11 bytes, null-terminated)
         name_bytes = zone_data[0:11]
         name = name_bytes.split(b'\x00')[0].replace(b'\xFF', b'').decode('ascii', errors='ignore')
         
-        # Parse channel list (46 bytes = 23 × 2-byte channel numbers)
+        # Channel count at byte 16 within zone entry
+        channel_count = min(zone_data[16], 64)
+        
+        # Channel list starts at byte 17 within zone entry
         channels = []
-        for i in range(23):
-            ch_offset = 11 + (i * 2)
+        for i in range(channel_count):
+            ch_offset = 17 + (i * 2)
             ch_num = struct.unpack('<H', zone_data[ch_offset:ch_offset+2])[0]
-            if ch_num != 0 and ch_num <= 4000:
+            if ch_num == 0:
+                break
+            if 1 <= ch_num <= 4000:
                 channels.append(ch_num)
         
         return cls(zone_name=name, channel_numbers=channels)
     
     def to_bytes(self) -> bytes:
-        """Convert zone to 57-byte record"""
-        data = bytearray(57)
+        """Convert zone to 145-byte record"""
+        data = bytearray(145)
+        data[:] = b'\xff' * 145  # Initialize to 0xFF
         
-        # Name (11 bytes)
-        name_bytes = self.zone_name.encode('ascii')[:10]  # Max 10 chars + null
+        # Name (11 bytes, null-terminated)
+        name_bytes = self.zone_name.encode('ascii')[:10]
         data[0:len(name_bytes)] = name_bytes
-        if len(name_bytes) < 11:
-            data[len(name_bytes)] = 0x00  # Null terminator
-            for i in range(len(name_bytes) + 1, 11):
-                data[i] = 0xFF  # Padding
+        data[len(name_bytes)] = 0x00  # Null terminator
+        # Bytes 11-15: 0xFF padding (already set)
         
-        # Channel list (46 bytes = 23 slots)
-        for i in range(23):
-            ch_offset = 11 + (i * 2)
-            if i < len(self.channel_numbers):
-                ch_num = self.channel_numbers[i]
-                data[ch_offset:ch_offset+2] = struct.pack('<H', ch_num)
-            else:
-                data[ch_offset:ch_offset+2] = b'\x00\x00'  # Empty slot
+        # Channel count at byte 16
+        channel_count = min(len(self.channel_numbers), 64)
+        data[16] = channel_count
+        
+        # Channel list starting at byte 17
+        for i in range(channel_count):
+            ch_offset = 17 + (i * 2)
+            data[ch_offset:ch_offset+2] = struct.pack('<H', self.channel_numbers[i])
         
         return bytes(data)
 ```
@@ -909,10 +911,6 @@ import (
     "fmt"
 )
 
-// Helper functions
-// Note: decodeBCDFrequency, encodeBCDFrequency, decodeCTCSSDCS, encodeCTCSSDCS
-// are defined in 06-ENCODING.md
-
 func bytesUntilNull(data []byte) int {
     for i, b := range data {
         if b == 0x00 || b == 0xFF {
@@ -922,10 +920,10 @@ func bytesUntilNull(data []byte) int {
     return len(data)
 }
 
-// Zone represents a DM32 zone (57 bytes)
+// Zone represents a DM32 zone (145 bytes)
 type Zone struct {
-    Name            string
-    ChannelNumbers  []uint16  // Up to 64 channels
+    Name           string
+    ChannelNumbers []uint16  // Up to 64 channels (1-4000)
 }
 
 // FromBytes parses a zone from the 4KB zone block
@@ -934,24 +932,32 @@ func (z *Zone) FromBytes(data []byte, zoneNumber int) error {
         return fmt.Errorf("zone block must be 4096 bytes")
     }
     
-    // Calculate offset: 57 * zoneNumber - 56
-    offset := 57*zoneNumber - 56
-    if offset+57 > 4096 {
+    // 16-byte block header, then 145-byte zone entries
+    offset := 16 + (zoneNumber-1)*145
+    if offset+145 > 4096 {
         return fmt.Errorf("zone %d offset out of range", zoneNumber)
     }
     
-    zoneData := data[offset : offset+57]
+    zoneData := data[offset : offset+145]
     
     // Parse name (11 bytes)
-    nameBytes := zoneData[0:11]
-    z.Name = string(nameBytes[:bytesUntilNull(nameBytes)])
+    z.Name = string(zoneData[:bytesUntilNull(zoneData[0:11])])
     
-    // Parse channel list (23 slots × 2 bytes)
-    z.ChannelNumbers = make([]uint16, 0, 64)
-    for i := 0; i < 23; i++ {
-        chOffset := 11 + (i * 2)
+    // Channel count at byte 16
+    channelCount := int(zoneData[16])
+    if channelCount > 64 {
+        channelCount = 64
+    }
+    
+    // Channel list starting at byte 17
+    z.ChannelNumbers = make([]uint16, 0, channelCount)
+    for i := 0; i < channelCount; i++ {
+        chOffset := 17 + i*2
         chNum := binary.LittleEndian.Uint16(zoneData[chOffset : chOffset+2])
-        if chNum != 0 && chNum <= 4000 {
+        if chNum == 0 {
+            break
+        }
+        if chNum >= 1 && chNum <= 4000 {
             z.ChannelNumbers = append(z.ChannelNumbers, chNum)
         }
     }
@@ -959,22 +965,30 @@ func (z *Zone) FromBytes(data []byte, zoneNumber int) error {
     return nil
 }
 
-// ToBytes converts zone to 57-byte record
+// ToBytes converts zone to 145-byte record
 func (z *Zone) ToBytes() []byte {
-    data := make([]byte, 57)
-    
-    // Name (11 bytes, null-terminated, pad with 0xFF)
-    copy(data[0:11], z.Name)
-    if len(z.Name) < 11 {
-        data[len(z.Name)] = 0x00
-        for i := len(z.Name) + 1; i < 11; i++ {
-            data[i] = 0xFF
-        }
+    data := make([]byte, 145)
+    for i := range data {
+        data[i] = 0xFF  // Initialize to 0xFF
     }
     
-    // Channel list (23 slots)
-    for i := 0; i < 23 && i < len(z.ChannelNumbers); i++ {
-        chOffset := 11 + (i * 2)
+    // Name (11 bytes, null-terminated)
+    copy(data[0:10], z.Name)
+    if len(z.Name) < 10 {
+        data[len(z.Name)] = 0x00
+    }
+    // Bytes 11-15: 0xFF padding (already set)
+    
+    // Channel count at byte 16
+    channelCount := len(z.ChannelNumbers)
+    if channelCount > 64 {
+        channelCount = 64
+    }
+    data[16] = byte(channelCount)
+    
+    // Channel list starting at byte 17
+    for i := 0; i < channelCount; i++ {
+        chOffset := 17 + i*2
         binary.LittleEndian.PutUint16(data[chOffset:chOffset+2], z.ChannelNumbers[i])
     }
     
@@ -987,41 +1001,26 @@ func (z *Zone) ToBytes() []byte {
 ```python
 def read_all_zones(radio_session):
     """Read all zones from radio"""
-    # Read zone block (metadata 0x5c)
     zone_block_addr = find_block_by_metadata(radio_session, 0x5c)
     zone_data = radio_session.commands.read_memory(zone_block_addr, 4096)
     
-    # Parse zones
     zones = []
-    for zone_num in range(1, 65):  # Zones 1-64
-        try:
-            zone = DM32Zone.from_bytes(zone_data, zone_num)
-            if zone.zone_name:  # Not empty
-                zones.append(zone)
-        except ValueError:
-            break  # Beyond valid zones
+    for zone_num in range(1, 29):  # Up to ~28 zones per 4KB block
+        offset = 16 + (zone_num - 1) * 145
+        if offset + 145 > len(zone_data):
+            break
+        zone = DM32Zone.from_bytes(zone_data, zone_num)
+        if zone.zone_name:
+            zones.append(zone)
+        elif zone_data[offset] == 0xFF:
+            break  # Empty zone signals end
     
     return zones
 ```
 
-### Usage Example
-
-```python
-# Parse zone 1
-zone_block = radio.read_memory(zone_address, 4096)
-zone1 = DM32Zone.from_bytes(zone_block, zone_number=1)
-
-print(f"Zone: {zone1.zone_name}")
-print(f"Channels: {zone1.channel_numbers}")
-
-# Output:
-# Zone: VHF
-# Channels: [1, 2, 3, 15, 20, 25]
-```
-
 ---
 
-## Scan List Structure (92 bytes)
+## Scan List Structure (57 bytes)
 
 **Metadata**: 0x11 (17)  
 **Block Size**: 4 KB (0x1000 bytes)  
@@ -1029,136 +1028,170 @@ print(f"Channels: {zone1.channel_numbers}")
 
 ### Memory Organization
 
-**Entry Size**: 0x5C (92) bytes per scan list  
-**Max Entries**: 44 scan lists per 4KB block (4096 / 92 = 44)
+**Count Byte**: Offset 0x00 (1 byte) — number of scan lists stored in this block  
+**Entry Size**: 0x39 (57) bytes per scan list  
+**Max Entries**: 32 scan lists (radio UI limit; formula supports up to ~71 per block)
 
-**Offset Calculation**:
-- Lists 1-44: `offset = 92 * ((scan_list - 1) % 44) + 16`
-- Lists 45+: `offset = 4096 * ((scan_list - 1) / 44) + 92 * ((scan_list - 1) % 44) + 0`
+**Offset Calculation**: Entry N (1-indexed): `(57 * N) - 56`
+
+**Examples**:
+- List 1: `(57 * 1) - 56 = 1` (offset 0x001)
+- List 2: `(57 * 2) - 56 = 58` (offset 0x03A)
+- List 44: `(57 * 44) - 56 = 2452` (offset 0x994)
 
 **Note**: Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
 
-### Field Layout
+### Field Layout (57 bytes per entry)
 
 ```
-┌─────────┬──────┬────────────────────┬─────────────────────────────────────┐
-│ Offset  │ Size │ Field Name         │ Description                          │
-├─────────┼──────┼────────────────────┼─────────────────────────────────────┤
-│ 0x00/16 │  16  │ scan_list_name     │ ASCII, null-term, 0xFF padding      │
-│ 0x10/32 │   3  │ unknown            │ Unknown (possibly frequency/settings) │
-│ 0x13/35 │   1  │ ctc_scan_mode      │ CTC Scan Mode (0-3)                 │
-│ 0x14/36 │   8  │ settings           │ Scan settings (TX mode, stay time)   │
-│ 0x1C/44 │  16  │ channel_list_1     │ First set of channels (16 bytes)    │
-│ 0x2C/60 │  16  │ channel_list_2     │ Second set of channels (16 bytes)    │
-│ 0x3C/76 │  16  │ channel_list_3     │ Third set of channels (16 bytes)     │
-│ 0x4C/92 │  16  │ channel_list_4     │ Fourth set of channels (16 bytes)    │
-└─────────┴──────┴────────────────────┴─────────────────────────────────────┘
+┌─────────┬──────┬───────────────────────┬──────────────────────────────────┐
+│ Offset  │ Size │ Field Name            │ Description                      │
+├─────────┼──────┼───────────────────────┼──────────────────────────────────┤
+│ 0x00-0A │  11  │ scan_list_name        │ ASCII, null-term, 0xFF padding   │
+│ 0x0B    │   1  │ channel_count         │ Number of channels (0-15)        │
+│ 0x0C    │   1  │ ctc_tx_mode           │ CTC Scan Mode (bits 0-1) +       │
+│         │      │                       │ Scan TX Mode (bits 2-3)          │
+│ 0x0D    │   1  │ hang_time             │ Hang time (tenths of seconds)    │
+│ 0x0E    │   1  │ priority_types        │ Priority 1 type (bits 0-3) +     │
+│         │      │                       │ Priority 2 type (bits 4-7)       │
+│ 0x0F-10 │   2  │ priority_channel_1    │ Channel number, 16-bit LE        │
+│ 0x11-12 │   2  │ designated_tx_channel │ Channel number, 16-bit LE (+2    │
+│         │      │                       │ encoded: stored = actual - 2)    │
+│ 0x13-14 │   2  │ priority_channel_2    │ Channel number, 16-bit LE (+2    │
+│         │      │                       │ encoded: stored = actual - 2)    │
+│ 0x15-19 │   5  │ unknown               │ Unknown/reserved                 │
+│ 0x1A-37 │  30  │ channel_list          │ Up to 15 channel numbers, 2 bytes│
+│         │      │                       │ LE each; 0x0000 = end of list    │
+└─────────┴──────┴───────────────────────┴──────────────────────────────────┘
+Total: 57 bytes (0x39)
 ```
 
 ### Field Values
 
-**CTC Scan Mode**:
+**CTC Scan Mode** (bits 0-1 of byte 0x0C):
 - 0 = Not Detection
 - 1 = Non Priority
 - 2 = Priority
 - 3 = Detection
 
-**Scan TX Mode**:
+**Scan TX Mode** (bits 2-3 of byte 0x0C):
 - 0 = Current Channel
 - 1 = Last Active
-- 2 = Designed Channel
+- 2 = Designated Channel
 
-**Maximum Channels per Scan List**: 16 channels (64 bytes total, format varies)
+**Priority Type** (per-priority nibble in byte 0x0E):
+- 0 = None
+- 1 = Current Channel
+- 2 = Designated Channel (value stored in priority_channel field)
+
+**Maximum Channels per Scan List**: 15 channels (30 bytes / 2 bytes per channel)
 
 ### Code Structure (C/C++)
 
 ```c
 #pragma pack(push, 1)
 typedef struct {
-    // 0x00/0x10: Scan list name (16 bytes)
-    // Note: Offset 16 for lists 1-44, 0 for lists 45+
-    char scan_list_name[16];
+    // 0x00: Scan list name (11 bytes, null-terminated)
+    char scan_list_name[11];
     
-    // 0x10/32: Unknown (3 bytes)
-    uint8_t unknown[3];
+    // 0x0B: Channel count (0-15)
+    uint8_t channel_count;
     
-    // 0x13/35: CTC Scan Mode
-    uint8_t ctc_scan_mode;  // 0-3
+    // 0x0C: CTC/TX mode byte
+    // Bits 0-1: CTC Scan Mode (0=Not Detection, 1=Non Priority, 2=Priority, 3=Detection)
+    // Bits 2-3: Scan TX Mode (0=Current, 1=Last Active, 2=Designated)
+    uint8_t ctc_tx_mode;
     
-    // 0x14/36: Settings (8 bytes)
-    uint8_t settings[8];  // Scan TX Mode, Stay Time, etc.
+    // 0x0D: Hang time (tenths of seconds)
+    uint8_t hang_time;
     
-    // 0x1C/44-0x4C/92: Channel lists (64 bytes total, 4 × 16 bytes)
-    uint8_t channel_list[64];  // Up to 16 channels
+    // 0x0E: Priority types
+    // Bits 0-3: Priority 1 type (0=None, 1=Current, 2=Designated)
+    // Bits 4-7: Priority 2 type (0=None, 1=Current, 2=Designated)
+    uint8_t priority_types;
+    
+    // 0x0F-0x10: Priority channel 1 (16-bit LE)
+    uint16_t priority_channel_1;
+    
+    // 0x11-0x12: Designated TX channel (16-bit LE, stored as actual - 2)
+    uint16_t designated_tx_channel;
+    
+    // 0x13-0x14: Priority channel 2 (16-bit LE, stored as actual - 2)
+    uint16_t priority_channel_2;
+    
+    // 0x15-0x19: Unknown (5 bytes)
+    uint8_t unknown[5];
+    
+    // 0x1A-0x37: Channel list (30 bytes = 15 × 2-byte channel numbers, LE)
+    uint16_t channel_numbers[15];  // 0x0000 = end of list
     
 } dm32_scan_list_t;
 #pragma pack(pop)
 
-static_assert(sizeof(dm32_scan_list_t) == 92, "Scan list structure must be 92 bytes");
+static_assert(sizeof(dm32_scan_list_t) == 57, "Scan list structure must be 57 bytes");
 ```
 
 ---
 
 ## RX Group List Structure
 
-**Metadata**: 0x0B (11)  
-**Block Size**: 24 KB (0x6000 bytes) = 6 pages × 4 KB each  
-**Purpose**: DMR receive group lists (talk groups)
+**Metadata**: 0x0F (15)  
+**Block Size**: 4 KB (0x1000 bytes)  
+**Purpose**: DMR receive group lists
+
+**⚠️ CORRECTION NOTE**: Earlier versions of this document incorrectly assigned this structure to metadata 0x0B with 24-byte entries. The correct metadata value is 0x0F, and the actual entry size is 109 bytes (0x6D), matching the memory layout described for V-frame 0x0F (Contacts/Talkgroups).
 
 ### Memory Organization
 
-**Count Field**: Offset 0-1 (2 bytes, little-endian) - number of RX groups  
-**Secondary Count**: Offset 2-3 (2 bytes)  
-**Flag Field**: Offset 4 (1 byte) - status flag
+**Entry Size**: 0x6D (109) bytes per RX group  
+**Max Entries per Block**: ~37 entries (⌊4096 / 109⌋ = 37)
 
-**Entry Size**: 0x18 (24) bytes per RX group  
-**Entries per Page**: 0xAA (170) entries per 4KB page  
-**Max Entries**: 6 × 170 = **1020 RX groups**
-
-**Entry Calculation**:
-- **Page**: `page = ((entry_num - 1) / 0xAA) + 1`
-- **Offset in Page**: `offset = ((entry_num - 1) % 0xAA) * 0x18`
-- **Entry Base**: `buffer + page * 0x1000 + offset`
+**Entry Calculation**: `buffer + entry_num * 0x6D` (0-indexed)
 
 **Note**: Block addresses are dynamically allocated and must be discovered via metadata discovery (see [04-MEMORY-LAYOUT.md](04-MEMORY-LAYOUT.md)).
 
-### Entry Structure (24 bytes)
+### Entry Structure (109 bytes)
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| +0x00 | 2 | Check value | Compared against validation constant |
-| +0x02 | 16 | Name data | Null-terminated, 0xFF indicates end |
-| +0x12 | 6 | Additional data | Extended fields |
-
-### Contact Mapping
-
-Each RX group can reference up to 32 contacts:
-- **First mapping**: Contact IDs at offset `0x100 + entry_num * 2` (2 bytes per entry)
-- **Second mapping**: Contact IDs at offset `0x740 + entry_num * 2` (2 bytes per entry)
-- **Entry mapping**: Offset `0xFE (254) + entry_num * 2` - maps to contact IDs
-- **Entry mapping 2**: Offset `0x740 (1856) + entry_num * 2` - secondary mapping
-
-Each contact reference is 2 bytes.
+| +0x00 | 4 | Bitmask | 32-bit LE bitmask — contact selection/membership flags |
+| +0x04 | 1 | Status flag | Entry status |
+| +0x05 | 10 | Reserved | Unknown/reserved |
+| +0x0F | 1 | Entry flag | Entry validation flag |
+| +0x10 | 11 | Name | Null-terminated ASCII, 0xFF padding |
+| +0x1B | variable | Contact ID slots | 3 bytes per slot; multiple slots per entry |
 
 ### Code Structure (C/C++)
 
 ```c
 #pragma pack(push, 1)
 typedef struct {
-    // 0x00: Check value (2 bytes)
-    uint16_t check_value;
+    // +0x00: Bitmask (4 bytes, little-endian)
+    uint32_t bitmask;
     
-    // 0x02: Name data (16 bytes)
-    char name[16];  // Null-terminated, 0xFF indicates end
+    // +0x04: Status flag
+    uint8_t status_flag;
     
-    // 0x12: Additional data (6 bytes)
-    uint8_t additional_data[6];
+    // +0x05: Reserved (10 bytes)
+    uint8_t reserved[10];
+    
+    // +0x0F: Entry validation flag
+    uint8_t entry_flag;
+    
+    // +0x10: Name (11 bytes, null-terminated, 0xFF padding)
+    char name[11];
+    
+    // +0x1B: Contact ID slots (variable, 3 bytes per slot)
+    // Remaining bytes to total 109
+    uint8_t contact_slots[73];
     
 } dm32_rx_group_entry_t;
 #pragma pack(pop)
 
-static_assert(sizeof(dm32_rx_group_entry_t) == 24, "RX group entry must be 24 bytes");
+static_assert(sizeof(dm32_rx_group_entry_t) == 109, "RX group entry must be 109 bytes");
 ```
+
+**⚠️ NOTE on metadata 0x0B**: The purpose of block type 0x0B is currently unconfirmed. It was previously (incorrectly) documented as the RX Group List. Do not rely on 0x0B for RX group data.
 
 ---
 

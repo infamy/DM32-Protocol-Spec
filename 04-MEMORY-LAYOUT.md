@@ -103,16 +103,16 @@ All metadata values discovered from probe data, organized by value. All blocks a
 | **0x08** | 0x08 | 8 | **Reserved** |
 | **0x09** | 0x09 | 9 | **Reserved** |
 | **0x0A** | 0x0A | 10 | **Quick Text Messages** |
-| **0x0B** | 0x0B | 11 | **RX Group List** |
+| **0x0B** | 0x0B | 11 | **Unknown** (previously documented as RX Group List — unconfirmed) |
 | **0x0C** | 0x0C | 12 | **Reserved** |
 | **0x0D** | 0x0D | 13 | **Reserved** |
 | **0x0E** | 0x0E | 14 | **Reserved** |
-| **0x0F** | 0x0F | 15 | **TX Contact Assignment** |
+| **0x0F** | 0x0F | 15 | **RX Group List (DMR Receive Groups)** |
 | **0x10** | 0x10 | 16 | **Analog Emergency Systems** |
 | **0x11** | 0x11 | 17 | **Scan Lists** |
 | **0x12-0x41** | 0x12-0x41 | 18-65 | **Channel blocks 0-47** (48 blocks, supports ~4,080 channels) |
-| **0x42** | 0x42 | 66 | **Reserved** |
-| **0x43** | 0x43 | 67 | **Reserved** |
+| **0x42** | 0x42 | 66 | **TX Contact Block Low** (2 bytes per channel, channels 1–2048) |
+| **0x43** | 0x43 | 67 | **TX Contact Block High** (2 bytes per channel, channels 2049+ and VFOs) |
 | **0x44-0x48** | 0x44-0x48 | 68-72| **Talk group blocks 0-4** (5 blocks, 170 talk groups each, 850 TGs total) |
 | **0x5A** | 0x5A | 90 | **Reserved** |
 | **0x5c** | 0x5c | 92 | **Zones** |
@@ -156,13 +156,13 @@ All metadata values discovered from probe data, organized by value. All blocks a
 - **0x04 - Embedded Information / Radio Names**: Radio identification and embedded data
 - **0x06 - DTMF Encode Data**: DTMF encoding configuration
 - **0x0A - Quick Text Messages**: Canned/predefined text messages
-- **0x0B - RX Group List**: DMR receive group lists (talk groups)
-- **0x0F - TX Contact Assignment**: DMR transmit contact assignments
+- **0x0B - Unknown**: Purpose unconfirmed (previously documented as RX Group List — incorrect)
+- **0x0F - RX Group List (DMR Receive Groups)**: DMR receive group lists — 109 bytes per entry (0x6D), ~37 entries per 4KB block
 - **0x10 - Analog Emergency Systems**: Analog emergency system configurations
-- **0x11 - Scan Lists**: Scan list definitions (92 bytes per list)
-  - Layout: Lists 1-44 start at offset 16, lists 45+ start at offset 0
-- **0x5c - Zones**: Zone definitions (57 bytes per zone)
-  - Capacity: Up to ~71 zones per 4KB block (4096 / 57)
+- **0x11 - Scan Lists**: Scan list definitions (57 bytes per entry)
+  - Count byte at offset 0x00; entry N at offset `(57 * N) - 56`
+- **0x5c - Zones**: Zone definitions (145 bytes per zone)
+  - 16-byte header; zone N at offset `16 + (N - 1) * 145`; up to ~28 zones per 4KB block
 - **0x65 - Roaming Zones**: DMR roaming zone configurations
 - **0x66 - Roaming Channels**: DMR roaming channel configurations
 - **0x67 - DMR Radio ID List**: DMR radio ID database
